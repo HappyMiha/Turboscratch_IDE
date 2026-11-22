@@ -33,7 +33,10 @@ import ChangeUsername from '../../containers/tw-change-username.jsx';
 import CloudVariablesToggler from '../../containers/tw-cloud-toggler.jsx';
 import TWSaveStatus from './tw-save-status.jsx';
 
-import {openTipsLibrary, openSettingsModal, openRestorePointModal, openCollabModal} from '../../reducers/modals';
+import {
+    openTipsLibrary, openSettingsModal, openRestorePointModal, openCollabModal, openCommunityModal
+} from '../../reducers/modals';
+import AccountButtons from '../tsc-community/account-button.jsx';
 import CollabButton from '../tsc-collab/collab-button.jsx';
 import turboscratchLogo from './turboscratch-logo.svg';
 import {setPlayer} from '../../reducers/mode';
@@ -1030,6 +1033,12 @@ class MenuBar extends React.Component {
                 </div>
 
                 <div className={styles.accountInfoGroup}>
+                    {!this.props.isPlayerOnly && (
+                        <AccountButtons
+                            itemClassName={classNames(styles.menuBarItem, styles.hoverable)}
+                            onOpenCommunity={this.props.onClickCommunity}
+                        />
+                    )}
                     <TWSaveStatus
                         showSaveFilePicker={this.props.showSaveFilePicker}
                     />
@@ -1121,6 +1130,7 @@ MenuBar.propTypes = {
     onClickSettings: PropTypes.func,
     onClickSettingsModal: PropTypes.func,
     onClickCollab: PropTypes.func,
+    onClickCommunity: PropTypes.func,
     onLogOut: PropTypes.func,
     onOpenRegistration: PropTypes.func,
     onOpenTipLibrary: PropTypes.func,
@@ -1211,6 +1221,7 @@ const mapDispatchToProps = dispatch => ({
     onRequestCloseAbout: () => dispatch(closeAboutMenu()),
     onClickRestorePoints: () => dispatch(openRestorePointModal()),
     onClickCollab: () => dispatch(openCollabModal()),
+    onClickCommunity: () => dispatch(openCommunityModal()),
     onClickSettings: () => dispatch(openSettingsMenu()),
     onClickSettingsModal: () => {
         dispatch(closeEditMenu());

@@ -28,6 +28,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {WebSocketServer} = require('ws');
+const {openDatabase} = require('./community/db');
+const {createCommunityApi} = require('./community/api');
 
 const PORT = Number(process.env.PORT) || 8090;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -370,7 +372,20 @@ const getRoom = id => {
     return room;
 };
 
+/** Accounts, posted projects, friends and studios (null if storage failed to open). */
+let community = null;
+let communityError = null;
+
 const httpServer = http.createServer((req, res) => {
+    if (req.url.startsWith('/api/')) {
+        if (community) {
+            community.handle(req, res);
+        } else {
+            res.writeHead(503, {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'});
+            res.end(JSON.stringify({error: 'Accounts aren\'t available on this server right now'}));
+        }
+        return;
+    }
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.url === '/' || req.url === '/health') {
         res.writeHead(200, {'Content-Type': 'application/json'});
@@ -378,7 +393,9 @@ const httpServer = http.createServer((req, res) => {
             name: 'TurboScratch IDE collaboration server',
             protocol: PROTOCOL_VERSION,
             rooms: rooms.size,
-            people: [...rooms.values()].reduce((n, r) => n + r.clients.size, 0)
+            people: [...rooms.values()].reduce((n, r) => n + r.clients.size, 0),
+            accounts: !!community,
+            accountStorage: community ? (process.env.DATABASE_URL ? 'postgres' : 'sqlite') : communityError
         }));
         return;
     }
@@ -515,8 +532,19 @@ const shutdown = () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-httpServer.listen(PORT, HOST, () => {
-    log(`TurboScratch collaboration server listening on ws://${HOST}:${PORT}`);
-});
+const start = async () => {
+    try {
+        const db = await openDatabase({databaseUrl: process.env.DATABASE_URL, dataDir: DATA_DIR});
+        community = createCommunityApi({db, log});
+        log(`Accounts enabled (${process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite file in the data folder'})`);
+    } catch (e) {
+        communityError = 'storage unavailable';
+        log('Accounts are disabled: could not open storage:', e.message);
+    }
+    httpServer.listen(PORT, HOST, () => {
+        log(`TurboScratch collaboration server listening on ws://${HOST}:${PORT}`);
+    });
+};
+start();
 
 module.exports = {httpServer, wss, rooms};

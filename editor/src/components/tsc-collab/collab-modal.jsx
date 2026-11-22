@@ -11,6 +11,7 @@ import {
     makeInviteLink,
     isLocalHostname
 } from '../../lib/tsc-collab/settings';
+import {getAccountState} from '../../lib/tsc-community/store';
 import styles from './collab-modal.css';
 
 const Avatar = ({name, color, small}) => (
@@ -31,7 +32,8 @@ Avatar.propTypes = {
 };
 
 const JoinForm = ({initialRoom, lastRoom, initialServer, error, projectReady, onJoin}) => {
-    const [name, setName] = useState(loadSavedName());
+    const account = getAccountState().user;
+    const [name, setName] = useState(loadSavedName() || (account ? account.nickname : ''));
     const [room, setRoom] = useState(initialRoom || lastRoom || makeRoomCode());
     const [server, setServer] = useState(initialServer || loadSavedServer() || defaultServerUrl());
     const [showAdvanced, setShowAdvanced] = useState(!!initialServer || !server);
@@ -335,6 +337,11 @@ const CollabModal = props => {
                     <div className={styles.spinner} />
                     {state.status === 'connecting' ? 'Connecting to the server…' : 'Loading the room\'s project…'}
                 </div>
+                {state.status === 'connecting' && (
+                    <p className={styles.hint}>
+                        {'A free online server that has been asleep can take up to a minute to wake up.'}
+                    </p>
+                )}
                 <div className={styles.footer}>
                     <button
                         type="button"

@@ -19,6 +19,7 @@ const MODAL_FONTS = 'fontsModal';
 const MODAL_UNKNOWN_PLATFORM = 'unknownPlatformModal';
 const MODAL_INVALID_PROJECT = 'invalidProjectModal';
 const MODAL_TSC_COLLAB = 'tscCollabModal';
+const MODAL_TSC_COMMUNITY = 'tscCommunityModal';
 
 const initialState = {
     [MODAL_BACKDROP_LIBRARY]: false,
@@ -38,7 +39,8 @@ const initialState = {
     [MODAL_FONTS]: false,
     [MODAL_UNKNOWN_PLATFORM]: false,
     [MODAL_INVALID_PROJECT]: false,
-    [MODAL_TSC_COLLAB]: false
+    [MODAL_TSC_COLLAB]: false,
+    [MODAL_TSC_COMMUNITY]: false
 };
 
 const reducer = function (state, action) {
@@ -176,6 +178,12 @@ const openCollabModal = function () {
 const closeCollabModal = function () {
     return closeModal(MODAL_TSC_COLLAB);
 };
+const openCommunityModal = function () {
+    return openModal(MODAL_TSC_COMMUNITY);
+};
+const closeCommunityModal = function () {
+    return closeModal(MODAL_TSC_COMMUNITY);
+};
 export {
     reducer as default,
     initialState as modalsInitialState,
@@ -214,5 +222,7 @@ export {
     closeUnknownPlatformModal,
     closeInvalidProjectModal,
     openCollabModal,
-    closeCollabModal
+    closeCollabModal,
+    openCommunityModal,
+    closeCommunityModal
 };

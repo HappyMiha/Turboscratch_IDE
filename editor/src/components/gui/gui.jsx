@@ -32,6 +32,7 @@ import TelemetryModal from '../telemetry-modal/telemetry-modal.jsx';
 import TWUsernameModal from '../../containers/tw-username-modal.jsx';
 import TWSettingsModal from '../../containers/tw-settings-modal.jsx';
 import TSCCollabModal from '../../containers/tsc-collab-modal.jsx';
+import TSCCommunityModal from '../../containers/tsc-community-modal.jsx';
 import TWSecurityManager from '../../containers/tw-security-manager.jsx';
 import TWCustomExtensionModal from '../../containers/tw-custom-extension-modal.jsx';
 import TWRestorePointManager from '../../containers/tw-restore-point-manager.jsx';
@@ -160,6 +161,7 @@ const GUIComponent = props => {
         unknownPlatformModalVisible,
         invalidProjectModalVisible,
         collabModalVisible,
+        communityModalVisible,
         vm,
         ...componentProps
     } = omit(props, 'dispatch');
@@ -195,6 +197,7 @@ const GUIComponent = props => {
                 {unknownPlatformModalVisible && <TWUnknownPlatformModal />}
                 {invalidProjectModalVisible && <TWInvalidProjectModal />}
                 {collabModalVisible && <TSCCollabModal />}
+                {communityModalVisible && <TSCCommunityModal />}
             </React.Fragment>
         );
 
@@ -540,6 +543,7 @@ GUIComponent.propTypes = {
     usernameModalVisible: PropTypes.bool,
     settingsModalVisible: PropTypes.bool,
     collabModalVisible: PropTypes.bool,
+    communityModalVisible: PropTypes.bool,
     customExtensionModalVisible: PropTypes.bool,
     fontsModalVisible: PropTypes.bool,
     unknownPlatformModalVisible: PropTypes.bool,

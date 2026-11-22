@@ -27,6 +27,28 @@ const PING_INTERVAL_MS = 15000;
 const DEAD_CONNECTION_MS = 45000;
 const MAX_MESSAGE_CHARS = 190 * 1024 * 1024;
 const MIN_AUTO_RESYNC_INTERVAL_MS = 60000;
+// Free hosting plans put idle servers to sleep; waking one can take ~1 minute.
+const WAKE_UP_TIMEOUT_MS = 90000;
+
+/**
+ * Asks the server's normal web address for /health first. A sleeping free
+ * server wakes up on that request, which is more reliable than waiting on a
+ * WebSocket handshake. Failures are ignored: the WebSocket attempt that
+ * follows reports any real problem.
+ */
+const wakeServer = async serverUrl => {
+    if (typeof fetch !== 'function' || typeof AbortController !== 'function') return;
+    const httpUrl = `${serverUrl.replace(/^ws(s?):\/\//i, 'http$1://').replace(/\/+$/, '')}/health`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WAKE_UP_TIMEOUT_MS);
+    try {
+        await fetch(httpUrl, {cache: 'no-store', signal: controller.signal});
+    } catch (e) {
+        // ignore
+    } finally {
+        clearTimeout(timer);
+    }
+};
 
 let chatKey = 0;
 
@@ -114,7 +136,11 @@ class CollabSession {
             chat: [],
             unreadChat: 0
         });
-        this.openSocket();
+        const params = this.joinParams;
+        wakeServer(serverUrl).then(() => {
+            // Still the same join (not cancelled or replaced meanwhile)?
+            if (this.wantConnected && this.joinParams === params && !this.ws) this.openSocket();
+        });
     }
 
     leave (quiet) {

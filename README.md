@@ -21,8 +21,12 @@ server. Because the website uses https, browsers only let it connect to a
 
 - To collaborate on the same Wi-Fi without hosting anything, use the local editor
   (`start-turboscratch.command`, below).
-- To collaborate on the website, run `collab-server` on a host that supports
-  WebSockets and gives you an `https`/`wss://` address. Then set a repository variable
+- To collaborate and use accounts on the website, run the server online. The
+  easiest free setup is [Render](https://render.com) plus a free
+  [Neon](https://neon.tech) PostgreSQL database: open
+  `https://render.com/deploy?repo=https://github.com/TurboScratch-IDE/Turboscratch_IDE`,
+  paste the Neon connection string as `DATABASE_URL`, and deploy (see `render.yaml`).
+  Then set a repository variable
   `TSC_COLLAB_SERVER` (Settings → Secrets and variables → Actions → Variables) to that
   `wss://` address so the website uses it by default. You can set
   `ALLOWED_ORIGINS=https://turboscratch-ide.github.io` on the server to only accept
@@ -56,6 +60,26 @@ not `localhost`. To work together over the internet, the collaboration server
 needs to run somewhere everyone can reach (a VPS or a hosting service with
 WebSocket support). Then enter its `wss://` address under **Server** in the
 Collaborate dialog.
+
+## Accounts, posting, friends and studios
+
+Click **Sign in** (top right) to create an account with a **nickname and a
+password**. With an account you can:
+
+- **Post** your project so everyone on the server can find and open it
+  (**Explore**), and later save new versions of it.
+- **Add friends** by nickname; they accept or decline your request.
+- **Make studios**: shared collections of projects. The owner invites people by
+  nickname, members add their projects, and the owner can remove members.
+
+Passwords are never stored: the server keeps only a salted scrypt hash. Sign-in
+attempts are rate-limited. There's no email, so a forgotten password can't be
+reset yet, and there are no moderation or report tools yet. Keep that in mind
+before inviting people you don't know.
+
+Accounts live on the TurboScratch server. On your computer they're stored in
+`collab-server/data/community.sqlite`. Online they need a PostgreSQL database
+(`DATABASE_URL`), because free hosting forgets files when it sleeps.
 
 ### What syncs live
 

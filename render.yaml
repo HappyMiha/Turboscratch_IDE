@@ -1,0 +1,26 @@
+# Render Blueprint: runs the TurboScratch server (collaboration + accounts) for free.
+# Deploy: https://render.com/deploy?repo=https://github.com/TurboScratch-IDE/Turboscratch_IDE
+#
+# DATABASE_URL: paste the connection string of a free PostgreSQL database
+# (for example from neon.tech) when Render asks. Accounts, posted projects,
+# friends and studios are stored there permanently.
+#
+# Free instances sleep after ~15 minutes with nobody connected and wake up
+# (in up to a minute) on the next visit. Their disk is temporary, so
+# collaboration rooms are kept only while the server is awake; everyone's
+# editor still has the project.
+services:
+  - type: web
+    name: turboscratch-server
+    runtime: node
+    plan: free
+    rootDir: collab-server
+    buildCommand: npm ci --no-audit --no-fund
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false

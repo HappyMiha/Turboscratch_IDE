@@ -51,7 +51,8 @@ const projectData = translateFunction => {
             },
             {
                 isStage: false,
-                name: translator(messages.sprite, {index: 1}),
+                // TurboScratch IDE: new projects start with the platypus
+                name: 'Platypus',
                 variables: {},
                 lists: {},
                 broadcasts: {},
@@ -60,13 +61,13 @@ const projectData = translateFunction => {
                 currentCostume: 0,
                 costumes: [
                     {
-                        assetId: '927d672925e7b99f7813735c484c6922',
-                        name: translator(messages.costume, {index: 1}),
+                        assetId: 'f03cceae15b2cff8e23a7da15918f906',
+                        name: 'platypus',
                         bitmapResolution: 1,
-                        md5ext: '927d672925e7b99f7813735c484c6922.svg',
+                        md5ext: 'f03cceae15b2cff8e23a7da15918f906.svg',
                         dataFormat: 'svg',
-                        rotationCenterX: 30.74937882782359,
-                        rotationCenterY: 58.864768144346826
+                        rotationCenterX: 62.5,
+                        rotationCenterY: 30
                     }
                 ],
                 sounds: [],

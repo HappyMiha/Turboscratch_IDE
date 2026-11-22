@@ -2,17 +2,18 @@
   "name": "turboscratch-collab-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Real-time collaboration server for TurboScratch IDE",
+  "description": "Collaboration and community server for TurboScratch IDE",
   "main": "server.js",
   "license": "GPL-3.0",
   "scripts": {
-    "start": "node server.js",
+    "start": "node --disable-warning=ExperimentalWarning server.js",
     "test": "node --test test/*.test.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13"
   },
   "dependencies": {
+    "pg": "^8.23.1",
     "ws": "^8.18.0"
   }
 }

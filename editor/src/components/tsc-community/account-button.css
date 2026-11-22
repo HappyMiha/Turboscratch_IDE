@@ -1,0 +1,50 @@
+.post-button {
+    padding: 0 0.9rem !important;
+    margin: 0 0.25rem;
+    height: 2rem !important;
+    align-self: center;
+    border-radius: 0.6rem;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    font-weight: bold;
+}
+
+.post-button:hover {
+    background: rgba(255, 255, 255, 0.3) !important;
+}
+
+.account-button {
+    gap: 0.4rem;
+    padding: 0 0.6rem;
+    max-width: 12rem;
+}
+
+.avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.92);
+    color: #0b6b63;
+    font-size: 0.8rem;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.label {
+    white-space: nowrap;
+}
+
+.name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media only screen and (max-width: 1024px) {
+    .name {
+        display: none;
+    }
+}

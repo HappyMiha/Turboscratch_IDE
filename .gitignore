@@ -16,3 +16,7 @@ collab-server/data/
 
 # The turboscratch-ide.github.io landing page is its own repo
 org-site/
+
+# Original platypus art (copies live in branding/)
+/platypus.png
+/platypus.svg

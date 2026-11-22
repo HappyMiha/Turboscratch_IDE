@@ -1,0 +1,40 @@
+# Runs the server tests against a real PostgreSQL database (the same kind the
+# online server uses). The Pages workflow runs them against SQLite.
+name: Server tests (PostgreSQL)
+
+on:
+  push:
+    paths:
+      - 'collab-server/**'
+      - '.github/workflows/server-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: turboscratch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: collab-server
+        run: npm ci --no-audit --no-fund
+      - name: Test
+        working-directory: collab-server
+        env:
+          DATABASE_URL: postgres://postgres:test-only-password@localhost:5432/turboscratch
+        run: npm test
