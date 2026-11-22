@@ -1,0 +1,18 @@
+# Dependencies and build output
+node_modules/
+editor/build/
+editor/dist/
+
+# Collaboration server room storage (your rooms' projects)
+collab-server/data/
+
+# Logs and local files
+*.log
+.DS_Store
+.claude/
+
+# Original TurboWarp git metadata (kept locally for reference)
+.turbowarp-upstream.git/
+
+# The turboscratch-ide.github.io landing page is its own repo
+org-site/

@@ -1,0 +1,21 @@
+{
+  "short_name": "TurboScratch",
+  "name": "TurboScratch IDE",
+  "description": "A Scratch mod for building projects together in real time, with TurboWarp's compiler, addons and advanced settings.",
+  "icons": [
+    {
+      "src": "images/192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "images/512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "editor",
+  "background_color": "#0f766e",
+  "display": "standalone",
+  "theme_color": "#13a89e"
+}

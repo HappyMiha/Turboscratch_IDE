@@ -1,0 +1,100 @@
+@import "../../css/colors.css";
+
+.collab-button {
+    position: relative;
+}
+
+.live {
+    background: rgba(255, 255, 255, 0.16);
+    border-radius: 0.5rem;
+}
+
+.live::after {
+    content: "";
+    position: absolute;
+    top: 0.45rem;
+    right: 0.3rem;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: #3ee07f;
+    box-shadow: 0 0 0 2px $menu-bar-background;
+}
+
+.reconnecting::after {
+    background: #ffb020;
+}
+
+.avatars {
+    display: inline-flex;
+    align-items: center;
+}
+
+.avatars > * + * {
+    margin-left: -0.4rem;
+}
+
+.more {
+    margin-left: 0.15rem;
+    font-size: 0.7rem;
+    font-weight: bold;
+}
+
+.pulse {
+    animation: pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+    from {
+        opacity: 0.4;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.badge {
+    margin-left: 0.3rem;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    padding: 0 0.25rem;
+    border-radius: 0.55rem;
+    background: #ff4d6d;
+    color: white;
+    font-size: 0.65rem;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.toasts {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    left: 0;
+    z-index: 600;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    pointer-events: none;
+}
+
+.toast {
+    white-space: nowrap;
+    padding: 0.4rem 0.7rem;
+    border-radius: 0.5rem;
+    border-left: 4px solid white;
+    background: $popover-background;
+    color: $text-primary;
+    font-size: 0.8rem;
+    font-weight: normal;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    animation: toast-in 0.2s ease-out;
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+}

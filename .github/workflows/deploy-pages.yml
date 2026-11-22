@@ -1,0 +1,64 @@
+# Builds the TurboScratch IDE editor and publishes it to GitHub Pages
+# every time something is pushed to the main branch.
+#
+# Optional: to give the online editor a default collaboration server, add a
+# repository variable named TSC_COLLAB_SERVER (Settings > Secrets and
+# variables > Actions > Variables), e.g. wss://my-collab-server.example.com
+name: Deploy editor to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editor/package-lock.json
+
+      - name: Install editor packages
+        working-directory: editor
+        run: npm ci --no-audit --no-fund
+
+      - name: Build editor
+        working-directory: editor
+        env:
+          NODE_ENV: production
+          # Pages serves this repo at /<repo name>/ (or / for a <owner>.github.io repo)
+          ROOT: ${{ endsWith(github.event.repository.name, '.github.io') && '/' || format('/{0}/', github.event.repository.name) }}
+          TSC_COLLAB_SERVER: ${{ vars.TSC_COLLAB_SERVER }}
+        run: npm run build
+
+      - name: Collaboration server tests
+        working-directory: collab-server
+        run: npm ci --no-audit --no-fund && npm test
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: editor/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
