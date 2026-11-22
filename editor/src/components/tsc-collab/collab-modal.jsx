@@ -95,6 +95,12 @@ const JoinForm = ({initialRoom, lastRoom, initialServer, error, projectReady, on
                     <span className={styles.hint}>{'Use letters, numbers, - and _ (max 40).'}</span>
                 )}
             </label>
+            {initialServer && initialServer !== defaultServerUrl() && (
+                <div className={styles.error}>
+                    {`This invite uses a different server: ${initialServer}. Only join if you trust whoever sent ` +
+                        'the link: that server will see your name and the project.'}
+                </div>
+            )}
             <div className={styles.notice}>
                 <strong>{'New room?'}</strong>
                 {' Your current project becomes the shared project. '}

@@ -20,11 +20,13 @@ let serverProcess;
 // A tiny valid zip ("PK..."), standing in for an .sb3 file
 const FAKE_SB3 = Buffer.from('504b0506000000000000000000000000000000000000', 'hex').toString('base64');
 
-const api = async (method, url, {token, body} = {}) => {
+const api = async (method, url, {token, body, ip, raw} = {}) => {
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
+    // The test server trusts one proxy hop, so this simulates visitors' addresses.
+    headers['X-Forwarded-For'] = ip || '192.0.2.1';
     if (body) headers['Content-Type'] = 'application/json';
-    const res = await fetch(`${BASE}${url}`, {method, headers, body: body ? JSON.stringify(body) : undefined});
+    const res = await fetch(`${BASE}${url}`, {method, headers, body: raw || (body ? JSON.stringify(body) : undefined)});
     const type = res.headers.get('content-type') || '';
     const data = type.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
     return {status: res.status, data};
@@ -40,7 +42,14 @@ const signup = async name => {
 
 before(() => new Promise((resolve, reject) => {
     serverProcess = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(__dirname, '..', 'server.js')], {
-        env: Object.assign({}, process.env, {PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR, SIGNUPS_PER_HOUR_PER_IP: '1000'}),
+        env: Object.assign({}, process.env, {
+            PORT: String(PORT),
+            HOST: '127.0.0.1',
+            DATA_DIR,
+            SIGNUPS_PER_HOUR_PER_IP: '1000',
+            TRUSTED_PROXY_HOPS: '1',
+            USER_QUOTA_MB: '1'
+        }),
         stdio: ['ignore', 'pipe', 'inherit']
     });
     serverProcess.stdout.on('data', chunk => {
@@ -63,8 +72,12 @@ test('accounts: sign up, sign in, wrong password, duplicates, sign out', async (
 
     const bad = await api('POST', '/api/signup', {body: {nickname: 'x', password: 'secret123'}});
     assert.strictEqual(bad.status, 400);
-    const shortPw = await api('POST', '/api/signup', {body: {nickname: nick('alex'), password: '123'}});
+    const shortPw = await api('POST', '/api/signup', {body: {nickname: nick('alex'), password: 'abc1234'}});
     assert.strictEqual(shortPw.status, 400);
+    const common = await api('POST', '/api/signup', {body: {nickname: nick('alex'), password: 'password123'}});
+    assert.strictEqual(common.status, 400);
+    const hasNick = await api('POST', '/api/signup', {body: {nickname: nick('alex'), password: `my-${nick('alex')}!`}});
+    assert.strictEqual(hasNick.status, 400);
 
     const token = await signup('alex');
     const me = await api('GET', '/api/me', {token});
@@ -233,16 +246,72 @@ test('studios: create, invite, join, add projects, permissions, leave and delete
     assert.strictEqual(gone.status, 404);
 });
 
-test('sign-in guessing is slowed down', async () => {
+test('wrong passwords are slowed down per place, without locking the real owner out', async () => {
     const name = nick('target');
-    await api('POST', '/api/signup', {body: {nickname: name, password: 'correct-horse'}});
+    await api('POST', '/api/signup', {body: {nickname: name, password: 'correct-horse-battery'}});
     let limited = false;
-    for (let i = 0; i < 15; i++) {
-        const res = await api('POST', '/api/login', {body: {nickname: name, password: `guess-${i}`}});
+    for (let i = 0; i < 12; i++) {
+        const res = await api('POST', '/api/login', {ip: '203.0.113.5', body: {nickname: name, password: `guess-${i}`}});
         if (res.status === 429) {
             limited = true;
             break;
         }
     }
-    assert.ok(limited, 'repeated wrong passwords get blocked for a while');
+    assert.ok(limited, 'repeated wrong passwords from one place get blocked for a while');
+    // Faking an address in front doesn't help: only the proxy's entry (last) counts.
+    const spoofed = await api('POST', '/api/login', {
+        ip: '10.9.8.7, 203.0.113.5', body: {nickname: name, password: 'another-guess'}
+    });
+    assert.strictEqual(spoofed.status, 429);
+    // The real owner, somewhere else, can still sign in.
+    const owner = await api('POST', '/api/login', {ip: '198.51.100.7', body: {nickname: name, password: 'correct-horse-battery'}});
+    assert.strictEqual(owner.status, 200);
+});
+
+test('oversized requests are refused before doing any work', async () => {
+    const huge = JSON.stringify({nickname: 'x'.repeat(100000), password: 'whatever-pass'});
+    const res = await api('POST', '/api/login', {raw: huge});
+    assert.strictEqual(res.status, 413);
+    const anonUpload = await api('POST', '/api/projects', {raw: JSON.stringify({title: 't', data: 'A'.repeat(200000)})});
+    assert.strictEqual(anonUpload.status, 401, 'not signed in: refused before reading the upload');
+});
+
+test('storage quota per person', async () => {
+    const token = await signup('quota');
+    // A 1.2 MB "project" (valid zip header) is over the test server's 1 MB quota
+    const big = Buffer.alloc(1.2 * 1024 * 1024);
+    big[0] = 0x50;
+    big[1] = 0x4b;
+    const res = await api('POST', '/api/projects', {token, body: {title: 'Big', data: big.toString('base64')}});
+    assert.strictEqual(res.status, 413);
+});
+
+test('after someone declines, they are not asked again right away', async () => {
+    const a = await signup('askera');
+    const b = await signup('askerb');
+    await api('POST', '/api/friends/requests', {token: a, body: {nickname: nick('askerb')}});
+    const first = await api('GET', '/api/friends', {token: b});
+    await api('POST', `/api/friends/requests/${first.data.incoming[0].id}/decline`, {token: b});
+    const again = await api('POST', '/api/friends/requests', {token: a, body: {nickname: nick('askerb')}});
+    assert.strictEqual(again.data.status, 'requested', 'the asker isn\'t told they were declined');
+    const after = await api('GET', '/api/friends', {token: b});
+    assert.strictEqual(after.data.incoming.length, 0);
+});
+
+test('a project\'s author can take it out of someone else\'s studio', async () => {
+    const owner = await signup('stowner');
+    const member = await signup('stmember');
+    const author = await signup('stauthor');
+    const studio = await api('POST', '/api/studios', {token: owner, body: {title: 'Mixed'}});
+    const sid = studio.data.studio.id;
+    await api('POST', `/api/studios/${sid}/invites`, {token: owner, body: {nickname: nick('stmember')}});
+    const inv = await api('GET', '/api/studios', {token: member});
+    await api('POST', `/api/studios/invites/${inv.data.invites[0].id}/accept`, {token: member});
+    const posted = await api('POST', '/api/projects', {token: author, body: {title: 'Mine', data: FAKE_SB3}});
+    const pid = posted.data.project.id;
+    await api('POST', `/api/studios/${sid}/projects`, {token: member, body: {projectId: pid}});
+    const removed = await api('DELETE', `/api/studios/${sid}/projects/${pid}`, {token: author});
+    assert.strictEqual(removed.status, 200);
+    const view = await api('GET', `/api/studios/${sid}`);
+    assert.strictEqual(view.data.projects.length, 0);
 });

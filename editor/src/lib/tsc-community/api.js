@@ -5,7 +5,6 @@
  * ws://host:8090 for rooms means http://host:8090 for the API.
  */
 
-import {defaultServerUrl, loadSavedServer} from '../tsc-collab/settings';
 import {arrayBufferToBase64} from '../tw-base64-utils';
 
 const TOKEN_KEY = 'tsc:account-token';
@@ -30,11 +29,24 @@ const safeSet = (key, value) => {
 const getToken = () => safeGet(TOKEN_KEY);
 const setToken = token => safeSet(TOKEN_KEY, token);
 
-/** The server's web address, or null if this editor has none configured. */
+/**
+ * The account server's web address, or null if this editor has none.
+ *
+ * For safety this never comes from an invite link or a server someone typed
+ * for collaboration (that would let a crafted link collect passwords and
+ * sign-ins). It's either the server built into this website, or, for the
+ * editor started on your own computer, the server running next to it.
+ */
 const getApiBase = () => {
-    const server = loadSavedServer() || defaultServerUrl();
-    if (!server) return null;
-    return server.replace(/^ws(s?):\/\//i, 'http$1://').replace(/\/+$/, '');
+    let base = null;
+    if (process.env.TSC_COLLAB_SERVER) {
+        base = process.env.TSC_COLLAB_SERVER.replace(/^ws(s?):\/\//i, 'http$1://').replace(/\/+$/, '');
+    } else if (location.protocol === 'http:' && location.hostname) {
+        base = `http://${location.hostname}:8090`;
+    }
+    // Never send passwords or sign-ins unencrypted from a secure page.
+    if (base && location.protocol === 'https:' && !/^https:\/\//i.test(base)) return null;
+    return base;
 };
 
 class ApiError extends Error {

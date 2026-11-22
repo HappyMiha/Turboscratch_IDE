@@ -4,7 +4,7 @@ import PropTypes from 'prop-types';
 import React, {useCallback, useEffect, useState} from 'react';
 import Modal from '../../containers/modal.jsx';
 import {api, getApiBase} from '../../lib/tsc-community/api';
-import {useAccount, signedIn, signOut, setAccountState} from '../../lib/tsc-community/store';
+import {useAccount, signedIn, signOut, setAccountState, markCommunityLoad} from '../../lib/tsc-community/store';
 import styles from './community-modal.css';
 
 const timeAgo = ms => {
@@ -151,7 +151,7 @@ const SignIn = ({startMode, onModeChange}) => {
                     type="password"
                     value={password}
                     autoComplete={creating ? 'new-password' : 'current-password'}
-                    placeholder={creating ? 'At least 6 characters' : ''}
+                    placeholder={creating ? 'At least 8 characters' : ''}
                     onChange={e => setPassword(e.target.value)}
                 />
             </label>
@@ -921,7 +921,13 @@ const CommunityModal = ({vm, projectTitle, onClose, onSetProjectTitle}) => {
         try {
             const data = await api.projectFile(project.id);
             vm.stopAll();
-            await vm.loadProject(data);
+            markCommunityLoad();
+            try {
+                await vm.loadProject(data);
+            } catch (e) {
+                markCommunityLoad(false);
+                throw e;
+            }
             onSetProjectTitle(project.title);
             setAccountState({
                 openProject: me && project.author === me.nickname ?
@@ -950,8 +956,7 @@ const CommunityModal = ({vm, projectTitle, onClose, onSetProjectTitle}) => {
     if (!serverReady) {
         body = (
             <div className={styles.empty}>
-                {'This editor isn\'t connected to a TurboScratch server, so accounts aren\'t available here yet. '}
-                {'Set a server under Collaborate → Server.'}
+                {'This editor isn\'t connected to a TurboScratch server, so accounts aren\'t available here yet.'}
             </div>
         );
     } else if (view === 'signin' || view === 'signup' || needsAccount) {

@@ -1036,6 +1036,7 @@ class MenuBar extends React.Component {
                     {!this.props.isPlayerOnly && (
                         <AccountButtons
                             itemClassName={classNames(styles.menuBarItem, styles.hoverable)}
+                            vm={this.props.vm}
                             onOpenCommunity={this.props.onClickCommunity}
                         />
                     )}

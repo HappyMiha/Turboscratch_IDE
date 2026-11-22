@@ -2,16 +2,17 @@
 import classNames from 'classnames';
 import PropTypes from 'prop-types';
 import React, {useEffect} from 'react';
-import {useAccount, setAccountState, restoreSession} from '../../lib/tsc-community/store';
+import {useAccount, setAccountState, restoreSession, attachVM} from '../../lib/tsc-community/store';
 import {getApiBase} from '../../lib/tsc-community/api';
 import styles from './account-button.css';
 
 /** "Post" and "Sign in" / your nickname, on the right of the menu bar. */
-const AccountButtons = ({itemClassName, onOpenCommunity}) => {
+const AccountButtons = ({itemClassName, onOpenCommunity, vm}) => {
     const account = useAccount();
     useEffect(() => {
         restoreSession();
-    }, []);
+        attachVM(vm);
+    }, [vm]);
     if (!getApiBase()) return null;
 
     const open = view => {
@@ -51,7 +52,8 @@ const AccountButtons = ({itemClassName, onOpenCommunity}) => {
 
 AccountButtons.propTypes = {
     itemClassName: PropTypes.string,
-    onOpenCommunity: PropTypes.func.isRequired
+    onOpenCommunity: PropTypes.func.isRequired,
+    vm: PropTypes.object
 };
 
 export default AccountButtons;

@@ -74,6 +74,14 @@ const SCHEMA = [
         created_at {{BIGINT}} NOT NULL,
         UNIQUE (studio_id, to_id)
     )`,
+    `CREATE TABLE IF NOT EXISTS declines (
+        kind TEXT NOT NULL,
+        from_id INTEGER NOT NULL,
+        to_id INTEGER NOT NULL,
+        target_id INTEGER NOT NULL,
+        created_at {{BIGINT}} NOT NULL,
+        PRIMARY KEY (kind, from_id, to_id, target_id)
+    )`,
     `CREATE TABLE IF NOT EXISTS studio_projects (
         studio_id INTEGER NOT NULL,
         project_id INTEGER NOT NULL,
@@ -155,11 +163,16 @@ class SqliteDb {
 }
 
 class PostgresDb {
-    constructor (databaseUrl, client) {
+    constructor (databaseUrl) {
         const pg = require('pg');
         // BIGINT columns hold millisecond timestamps, which fit in a JS number.
         pg.types.setTypeParser(20, value => parseInt(value, 10));
-        this.pool = client || new pg.Pool({connectionString: databaseUrl, max: 5});
+        this.pool = new pg.Pool({connectionString: databaseUrl, max: 5});
+        // A dropped idle connection must not crash the whole server.
+        this.pool.on('error', err => {
+            // eslint-disable-next-line no-console
+            console.error('[db] idle connection error:', err.message);
+        });
         this.dialect = 'postgres';
     }
 
@@ -186,17 +199,24 @@ class PostgresDb {
             get: (sql, params) => this.get(sql, params, client),
             run: (sql, params) => this.run(sql, params, client)
         };
+        let result;
         try {
             await client.query('BEGIN');
-            const result = await fn(scoped);
+            result = await fn(scoped);
             await client.query('COMMIT');
-            return result;
         } catch (e) {
-            await client.query('ROLLBACK');
+            let broken = false;
+            try {
+                await client.query('ROLLBACK');
+            } catch (rollbackError) {
+                broken = true;
+            }
+            // A connection whose rollback failed is thrown away, not reused.
+            client.release(broken);
             throw e;
-        } finally {
-            client.release();
         }
+        client.release();
+        return result;
     }
 
     async close () {

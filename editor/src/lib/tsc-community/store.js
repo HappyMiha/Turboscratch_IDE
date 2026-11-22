@@ -47,6 +47,25 @@ const signOut = async () => {
     setAccountState({user: null, openProject: null});
 };
 
+// "Save changes" may only update the posted project that is actually open:
+// any other project load (File > Load/New, a collaboration room...) forgets it.
+let expectingCommunityLoad = false;
+let attachedVm = null;
+const attachVM = vm => {
+    if (!vm || attachedVm === vm) return;
+    attachedVm = vm;
+    vm.runtime.on('PROJECT_LOADED', () => {
+        if (expectingCommunityLoad) {
+            expectingCommunityLoad = false;
+        } else if (state.openProject) {
+            setAccountState({openProject: null});
+        }
+    });
+};
+const markCommunityLoad = (expecting = true) => {
+    expectingCommunityLoad = expecting;
+};
+
 let checked = false;
 /** On startup, check that a saved sign-in is still valid. */
 const restoreSession = async () => {
@@ -63,6 +82,8 @@ const restoreSession = async () => {
 };
 
 export {
+    attachVM,
+    markCommunityLoad,
     getAccountState,
     setAccountState,
     useAccount,

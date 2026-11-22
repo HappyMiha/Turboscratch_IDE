@@ -10,10 +10,16 @@
 const auth = require('./auth');
 
 const NICKNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
-const MIN_PASSWORD = 6;
 const MAX_PASSWORD = 200;
-const MAX_BODY_BYTES = 22 * 1024 * 1024;
-const MAX_PROJECT_BYTES = 15 * 1024 * 1024;
+// Request bodies: small for everything except uploading a project.
+const SMALL_BODY_BYTES = 16 * 1024;
+const PROJECT_BODY_BYTES = 15 * 1024 * 1024;
+const MAX_PROJECT_BYTES = 10 * 1024 * 1024;
+// Storage limits, so one account can't fill up a free database.
+const USER_QUOTA_BYTES = (Number(process.env.USER_QUOTA_MB) || 50) * 1024 * 1024;
+const TOTAL_QUOTA_BYTES = (Number(process.env.TOTAL_PROJECT_STORAGE_MB) || 400) * 1024 * 1024;
+// Someone who said no can't be asked again for a week.
+const DECLINE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_TITLE = 100;
 const MAX_STUDIO_TITLE = 60;
 const MAX_DESCRIPTION = 2000;
@@ -41,12 +47,18 @@ const sendJson = (res, status, body) => {
     res.end(body === null ? '' : JSON.stringify(body));
 };
 
-const readJson = req => new Promise((resolve, reject) => {
+const readJson = (req, maxBytes) => new Promise((resolve, reject) => {
+    const declared = Number(req.headers['content-length']);
+    if (declared > maxBytes) {
+        reject(new HttpError(413, 'That is too big to upload'));
+        req.resume();
+        return;
+    }
     const chunks = [];
     let size = 0;
     req.on('data', chunk => {
         size += chunk.length;
-        if (size > MAX_BODY_BYTES) {
+        if (size > maxBytes) {
             reject(new HttpError(413, 'That is too big to upload'));
             req.destroy();
             return;
@@ -68,12 +80,7 @@ const readJson = req => new Promise((resolve, reject) => {
     req.on('error', reject);
 });
 
-const clientIp = req => {
-    // Hosting services put the visitor's address first in X-Forwarded-For.
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded) return forwarded.split(',')[0].trim();
-    return req.socket.remoteAddress || 'unknown';
-};
+const clientIp = auth.clientIp;
 
 const cleanText = (value, max, field, required) => {
     const text = typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim() : '';
@@ -97,15 +104,26 @@ const projectSummary = row => ({
 const PROJECT_COLUMNS = 'p.id, p.title, p.description, p.size, p.created_at, p.updated_at, u.nickname AS author';
 
 const createCommunityApi = ({db, log}) => {
-    const ipSignInLimiter = new auth.RateLimiter(30, 10 * 60 * 1000);
-    const nicknameSignInLimiter = new auth.RateLimiter(10, 15 * 60 * 1000);
-    const signupLimiter = new auth.RateLimiter(Number(process.env.SIGNUPS_PER_HOUR_PER_IP) || 10, 60 * 60 * 1000);
-    const postLimiter = new auth.RateLimiter(60, 60 * 60 * 1000);
+    // All sign-in attempts from one address (a whole school can share one).
+    const ipSignInLimiter = new auth.RateLimiter(100, 10 * 60 * 1000);
+    // Wrong passwords: strict per nickname+address, looser per nickname, so a
+    // bully can't lock someone out and guessers get stopped quickly.
+    const failedByNicknameAndIp = new auth.RateLimiter(8, 15 * 60 * 1000);
+    const failedByNickname = new auth.RateLimiter(50, 15 * 60 * 1000);
+    const signupLimiter = new auth.RateLimiter(Number(process.env.SIGNUPS_PER_HOUR_PER_IP) || 20, 60 * 60 * 1000);
+    const postLimiter = new auth.RateLimiter(30, 60 * 60 * 1000);
     const actionLimiter = new auth.RateLimiter(300, 10 * 60 * 1000);
+    const downloadLimiter = new auth.RateLimiter(300, 10 * 60 * 1000);
 
     const routes = [];
     const route = (method, pattern, handler, options = {}) => {
-        routes.push({method, pattern, handler, signedIn: !!options.signedIn});
+        routes.push({
+            method,
+            pattern,
+            handler,
+            signedIn: !!options.signedIn,
+            maxBody: options.maxBody || SMALL_BODY_BYTES
+        });
     };
 
     // ---- helpers ----------------------------------------------------------
@@ -166,6 +184,20 @@ const createCommunityApi = ({db, log}) => {
         return bytes;
     };
 
+    /** Refuse uploads that would go over the per-person or total storage limit. */
+    const checkQuota = async (me, newBytes, replacingProjectId) => {
+        const mine = await db.get('SELECT COALESCE(SUM(size), 0) AS total FROM projects WHERE owner_id = ? AND id <> ?',
+            [me.id, replacingProjectId || 0]);
+        if (Number(mine.total) + newBytes > USER_QUOTA_BYTES) {
+            throw new HttpError(413, `Your projects can use at most ${USER_QUOTA_BYTES / 1024 / 1024} MB in total. ` +
+                'Delete an old one to make room');
+        }
+        const all = await db.get('SELECT COALESCE(SUM(size), 0) AS total FROM projects');
+        if (Number(all.total) + newBytes > TOTAL_QUOTA_BYTES) {
+            throw new HttpError(507, 'The server is full right now, so new projects can\'t be posted');
+        }
+    };
+
     const getStudio = async id => {
         const studio = await db.get(`SELECT s.id, s.title, s.description, s.created_at, s.owner_id, u.nickname AS owner
             FROM studios s JOIN users u ON u.id = s.owner_id WHERE s.id = ?`, [id]);
@@ -176,6 +208,17 @@ const createCommunityApi = ({db, log}) => {
     const membership = (studioId, userId) => db.get(
         'SELECT role FROM studio_members WHERE studio_id = ? AND user_id = ?', [studioId, userId]);
 
+    const recentlyDeclined = async (kind, fromId, toId, targetId) => !!await db.get(
+        'SELECT 1 AS yes FROM declines WHERE kind = ? AND from_id = ? AND to_id = ? AND target_id = ? AND created_at > ?',
+        [kind, fromId, toId, targetId, Date.now() - DECLINE_COOLDOWN_MS]);
+
+    const rememberDecline = async (kind, fromId, toId, targetId) => {
+        await db.run('DELETE FROM declines WHERE kind = ? AND from_id = ? AND to_id = ? AND target_id = ?',
+            [kind, fromId, toId, targetId]);
+        await db.run('INSERT INTO declines (kind, from_id, to_id, target_id, created_at) VALUES (?, ?, ?, ?, ?)',
+            [kind, fromId, toId, targetId, Date.now()]);
+    };
+
     // ---- accounts ---------------------------------------------------------
 
     route('POST', /^\/api\/signup$/, async ({req, body}) => {
@@ -184,12 +227,8 @@ const createCommunityApi = ({db, log}) => {
         if (!NICKNAME_RE.test(nickname)) {
             throw new HttpError(400, 'Nicknames are 3-20 letters, numbers, - or _');
         }
-        if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD) {
-            throw new HttpError(400, `Passwords need at least ${MIN_PASSWORD} characters`);
-        }
-        if (password.toLowerCase() === nickname.toLowerCase()) {
-            throw new HttpError(400, 'Your password can\'t be the same as your nickname');
-        }
+        const problem = auth.passwordProblem(password, nickname);
+        if (problem) throw new HttpError(400, problem);
         if (!signupLimiter.hit(clientIp(req))) throw new HttpError(429, 'Too many new accounts. Try again later');
         if (await findUser(nickname)) throw new HttpError(409, 'That nickname is already taken');
         const passwordHash = await auth.hashPassword(password);
@@ -209,17 +248,29 @@ const createCommunityApi = ({db, log}) => {
     route('POST', /^\/api\/login$/, async ({req, body}) => {
         const nickname = typeof body.nickname === 'string' ? body.nickname.trim() : '';
         const password = typeof body.password === 'string' ? body.password : '';
-        if (!ipSignInLimiter.hit(clientIp(req)) || !nicknameSignInLimiter.hit(nickname.toLowerCase())) {
+        const ip = clientIp(req);
+        if (!ipSignInLimiter.hit(ip)) {
             throw new HttpError(429, 'Too many sign-in attempts. Wait a few minutes and try again');
         }
-        const user = NICKNAME_RE.test(nickname) && password.length <= MAX_PASSWORD ?
-            await db.get('SELECT id, nickname, created_at, password_hash FROM users WHERE nickname_lower = ?',
-                [nickname.toLowerCase()]) :
-            null;
+        if (!NICKNAME_RE.test(nickname) || password.length > MAX_PASSWORD) {
+            throw new HttpError(401, 'Wrong nickname or password');
+        }
+        const lower = nickname.toLowerCase();
+        const pairKey = `${lower}|${ip}`;
+        if (failedByNicknameAndIp.blocked(pairKey) || failedByNickname.blocked(lower)) {
+            throw new HttpError(429, 'Too many wrong passwords. Wait a few minutes and try again');
+        }
+        const user = await db.get('SELECT id, nickname, created_at, password_hash FROM users WHERE nickname_lower = ?',
+            [lower]);
         const ok = user ?
             await auth.verifyPassword(password, user.password_hash) :
             await auth.dummyVerify(password);
-        if (!ok) throw new HttpError(401, 'Wrong nickname or password');
+        if (!ok) {
+            failedByNicknameAndIp.hit(pairKey);
+            failedByNickname.hit(lower);
+            throw new HttpError(401, 'Wrong nickname or password');
+        }
+        failedByNicknameAndIp.reset(pairKey);
         return [200, await startSession(user)];
     });
 
@@ -260,25 +311,39 @@ const createCommunityApi = ({db, log}) => {
         const title = cleanText(body.title, MAX_TITLE, 'title', true);
         const description = cleanText(body.description, MAX_DESCRIPTION, 'description', false);
         const data = decodeProjectData(body.data);
+        await checkQuota(me, data.length, 0);
         const now = Date.now();
         const row = await db.get(`INSERT INTO projects (owner_id, title, description, data, size, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`, [me.id, title, description, data, data.length, now, now]);
         return [201, {project: projectSummary(await getProjectRow(row.id))}];
-    }, {signedIn: true});
+    }, {signedIn: true, maxBody: PROJECT_BODY_BYTES});
 
     route('GET', /^\/api\/projects\/(\d+)$/, async ({params}) => (
         [200, {project: projectSummary(await getProjectRow(Number(params[0])))}]
     ));
 
-    route('GET', /^\/api\/projects\/(\d+)\/file$/, async ({params, res}) => {
-        const row = await db.get('SELECT data FROM projects WHERE id = ?', [Number(params[0])]);
+    route('GET', /^\/api\/projects\/(\d+)\/file$/, async ({req, params, res}) => {
+        if (!downloadLimiter.hit(clientIp(req))) throw new HttpError(429, 'Too many downloads. Try again soon');
+        const id = Number(params[0]);
+        const meta = await db.get('SELECT updated_at FROM projects WHERE id = ?', [id]);
+        if (!meta) throw new HttpError(404, 'That project doesn\'t exist (anymore)');
+        const etag = `"p${id}-${meta.updated_at}"`;
+        const headers = Object.assign({
+            'ETag': etag,
+            'Cache-Control': 'public, max-age=60',
+            'X-Content-Type-Options': 'nosniff'
+        }, CORS_HEADERS);
+        if (req.headers['if-none-match'] === etag) {
+            res.writeHead(304, headers);
+            res.end();
+            return null;
+        }
+        const row = await db.get('SELECT data FROM projects WHERE id = ?', [id]);
         if (!row) throw new HttpError(404, 'That project doesn\'t exist (anymore)');
         res.writeHead(200, Object.assign({
             'Content-Type': 'application/x.scratch.sb3',
-            'Content-Length': row.data.length,
-            'Cache-Control': 'no-cache',
-            'X-Content-Type-Options': 'nosniff'
-        }, CORS_HEADERS));
+            'Content-Length': row.data.length
+        }, headers));
         res.end(row.data);
         return null;
     });
@@ -297,11 +362,12 @@ const createCommunityApi = ({db, log}) => {
                 [title, description, now, project.id]);
         } else {
             const data = decodeProjectData(body.data);
+            await checkQuota(me, data.length, project.id);
             await db.run('UPDATE projects SET title = ?, description = ?, data = ?, size = ?, updated_at = ? WHERE id = ?',
                 [title, description, data, data.length, now, project.id]);
         }
         return [200, {project: projectSummary(await getProjectRow(project.id))}];
-    }, {signedIn: true});
+    }, {signedIn: true, maxBody: PROJECT_BODY_BYTES});
 
     route('DELETE', /^\/api\/projects\/(\d+)$/, async ({me, params}) => {
         const project = await getProjectRow(Number(params[0]));
@@ -356,8 +422,11 @@ const createCommunityApi = ({db, log}) => {
             await db.tx(t => makeFriends(t, me.id, other.id));
             return [200, {status: 'friends'}];
         }
-        await db.run('INSERT INTO friend_requests (from_id, to_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
-            [me.id, other.id, Date.now()]);
+        if (!await recentlyDeclined('friend', me.id, other.id, 0)) {
+            await db.run('INSERT INTO friend_requests (from_id, to_id, created_at) VALUES (?, ?, ?) ' +
+                'ON CONFLICT DO NOTHING', [me.id, other.id, Date.now()]);
+        }
+        // Same answer either way, so nobody learns they were declined.
         return [201, {status: 'requested'}];
     }, {signedIn: true});
 
@@ -371,8 +440,11 @@ const createCommunityApi = ({db, log}) => {
     }, {signedIn: true});
 
     route('POST', /^\/api\/friends\/requests\/(\d+)\/decline$/, async ({me, params}) => {
-        await db.run('DELETE FROM friend_requests WHERE id = ? AND (to_id = ? OR from_id = ?)',
+        const request = await db.get('SELECT id, from_id, to_id FROM friend_requests WHERE id = ? AND (to_id = ? OR from_id = ?)',
             [Number(params[0]), me.id, me.id]);
+        if (!request) return [200, {ok: true}];
+        await db.run('DELETE FROM friend_requests WHERE id = ?', [request.id]);
+        if (request.to_id === me.id) await rememberDecline('friend', request.from_id, me.id, 0);
         return [200, {ok: true}];
     }, {signedIn: true});
 
@@ -451,8 +523,10 @@ const createCommunityApi = ({db, log}) => {
         if (studio.owner_id !== me.id) throw new HttpError(403, 'Only the studio\'s owner can invite people');
         const other = await requireUser(body.nickname);
         if (await membership(studio.id, other.id)) throw new HttpError(409, `${other.nickname} is already in this studio`);
-        await db.run('INSERT INTO studio_invites (studio_id, from_id, to_id, created_at) VALUES (?, ?, ?, ?) ' +
-            'ON CONFLICT DO NOTHING', [studio.id, me.id, other.id, Date.now()]);
+        if (!await recentlyDeclined('studio', me.id, other.id, studio.id)) {
+            await db.run('INSERT INTO studio_invites (studio_id, from_id, to_id, created_at) VALUES (?, ?, ?, ?) ' +
+                'ON CONFLICT DO NOTHING', [studio.id, me.id, other.id, Date.now()]);
+        }
         return [201, {status: 'invited'}];
     }, {signedIn: true});
 
@@ -470,8 +544,11 @@ const createCommunityApi = ({db, log}) => {
     }, {signedIn: true});
 
     route('POST', /^\/api\/studios\/invites\/(\d+)\/decline$/, async ({me, params}) => {
-        await db.run('DELETE FROM studio_invites WHERE id = ? AND (to_id = ? OR from_id = ?)',
-            [Number(params[0]), me.id, me.id]);
+        const invite = await db.get('SELECT id, studio_id, from_id, to_id FROM studio_invites WHERE id = ? AND ' +
+            '(to_id = ? OR from_id = ?)', [Number(params[0]), me.id, me.id]);
+        if (!invite) return [200, {ok: true}];
+        await db.run('DELETE FROM studio_invites WHERE id = ?', [invite.id]);
+        if (invite.to_id === me.id) await rememberDecline('studio', invite.from_id, me.id, invite.studio_id);
         return [200, {ok: true}];
     }, {signedIn: true});
 
@@ -490,8 +567,11 @@ const createCommunityApi = ({db, log}) => {
         const link = await db.get('SELECT added_by FROM studio_projects WHERE studio_id = ? AND project_id = ?',
             [studio.id, Number(params[1])]);
         if (!link) return [200, {ok: true}];
-        if (studio.owner_id !== me.id && link.added_by !== me.id) {
-            throw new HttpError(403, 'Only the studio owner or whoever added it can remove it');
+        const project = await db.get('SELECT owner_id FROM projects WHERE id = ?', [Number(params[1])]);
+        const isAuthor = project && project.owner_id === me.id;
+        const addedItAndStillMember = link.added_by === me.id && await membership(studio.id, me.id);
+        if (studio.owner_id !== me.id && !isAuthor && !addedItAndStillMember) {
+            throw new HttpError(403, 'Only the studio owner, the project\'s author or whoever added it can remove it');
         }
         await db.run('DELETE FROM studio_projects WHERE studio_id = ? AND project_id = ?', [studio.id, Number(params[1])]);
         return [200, {ok: true}];
@@ -544,9 +624,10 @@ const createCommunityApi = ({db, log}) => {
                 throw new HttpError(candidates.length ? 405 : 404, 'Not found');
             }
             const params = url.pathname.match(match.pattern).slice(1);
-            const body = req.method === 'POST' || req.method === 'PUT' ? await readJson(req) : {};
+            // Check who's asking before reading (possibly large) request bodies.
             const me = await currentUser(req);
             if (match.signedIn && !me) throw new HttpError(401, 'Please sign in first');
+            const body = req.method === 'POST' || req.method === 'PUT' ? await readJson(req, match.maxBody) : {};
             const result = await match.handler({req, res, url, params, body, me});
             if (result) sendJson(res, result[0], result[1]);
         } catch (e) {
