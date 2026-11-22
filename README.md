@@ -15,10 +15,13 @@ The editor is rebuilt and published automatically by GitHub Actions
 (`.github/workflows/deploy-pages.yml`) every time `main` is pushed.
 
 GitHub Pages only hosts the editor's web pages; it can't run the collaboration
-server. On the website, type a server address in **Collaborate → Server**:
+server. Because the website uses https, browsers only let it connect to a
+**secure `wss://` server**. It can't reach a server on your own computer
+(`ws://localhost` is blocked). So:
 
-- `ws://localhost:8090` works for testing with the server running on your own computer.
-- To collaborate over the internet, run `collab-server` on a host that supports
+- To collaborate on the same Wi-Fi without hosting anything, use the local editor
+  (`start-turboscratch.command`, below).
+- To collaborate on the website, run `collab-server` on a host that supports
   WebSockets and gives you an `https`/`wss://` address. Then set a repository variable
   `TSC_COLLAB_SERVER` (Settings → Secrets and variables → Actions → Variables) to that
   `wss://` address so the website uses it by default. You can set

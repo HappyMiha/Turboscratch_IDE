@@ -120,11 +120,11 @@ const JoinForm = ({initialRoom, lastRoom, initialServer, error, projectReady, on
                         {'Start it with "npm start" in the collab-server folder. '}
                         {'Everyone in a room must use the same server.'}
                     </span>
-                    {location.protocol === 'https:' && /^ws:/.test(server.trim()) &&
-                        !/^ws:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(server.trim()) && (
+                    {location.protocol === 'https:' && !/^wss:\/\//.test(server.trim()) && (
                         <span className={styles.hint}>
-                            {'This page uses https, so browsers only allow secure wss:// servers ' +
-                                '(or ws://localhost for testing on your own computer).'}
+                            {'This website uses https, so browsers only let it connect to secure wss:// ' +
+                                'servers. To collaborate with a server on your own computer, use the editor ' +
+                                'you start with start-turboscratch.command instead.'}
                         </span>
                     )}
                 </label>
