@@ -153,6 +153,11 @@
     cursor: pointer;
 }
 
+.progress-box {
+    display: flex;
+    flex-direction: column;
+}
+
 .progress {
     display: flex;
     align-items: center;

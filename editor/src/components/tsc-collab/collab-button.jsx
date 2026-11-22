@@ -12,7 +12,7 @@ const CollabButton = ({className, labelClassName, onClick}) => {
     const state = useCollabState();
     const live = state.status === 'connected' || state.status === 'reconnecting';
     const busy = state.status === 'connecting' || state.status === 'syncing';
-    const everyone = live ? [state.me].concat(state.peers) : [];
+    const everyone = live ? [state.me].concat(state.peers).filter(Boolean) : [];
     const shown = everyone.slice(0, MAX_AVATARS);
     const extra = everyone.length - shown.length;
 

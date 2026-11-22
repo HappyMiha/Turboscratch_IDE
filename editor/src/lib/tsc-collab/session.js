@@ -23,13 +23,10 @@ import {saveName, saveServer} from './settings';
 
 const PROTOCOL_VERSION = 1;
 const PRESENCE_THROTTLE_MS = 250;
-const QUIET_TIMEOUT_MS = 15000;
 const PING_INTERVAL_MS = 15000;
 const DEAD_CONNECTION_MS = 45000;
 const MAX_MESSAGE_CHARS = 190 * 1024 * 1024;
 const MIN_AUTO_RESYNC_INTERVAL_MS = 60000;
-
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 let chatKey = 0;
 
@@ -60,6 +57,8 @@ class CollabSession {
         this.incoming = Promise.resolve();
         this.generation = 0;
         this.lastAutoResync = 0;
+        this.snapshotWanted = false;
+        this.snapshotRetryTimer = null;
 
         this.presenceTimer = null;
         this.lastPresenceTarget = null;
@@ -80,6 +79,7 @@ class CollabSession {
         }
         this.vm = vm;
         this.sync = new VMSync(vm, this.handleLocalOp);
+        this.sync.onFatal = message => this.fail(message);
         this.sync.install();
         vm.on('targetsUpdate', this.handleTargetsUpdate);
     }
@@ -126,6 +126,8 @@ class CollabSession {
 
     closeSocket () {
         this.generation++;
+        this.snapshotWanted = false;
+        clearTimeout(this.snapshotRetryTimer);
         clearInterval(this.pingTimer);
         this.pingTimer = null;
         if (this.sync) this.sync.setCapturing(false);
@@ -206,6 +208,9 @@ class CollabSession {
             );
             return;
         }
+        if (getState().status === 'connected') {
+            pushToast('Connection lost. Changes you make until it reconnects won\'t be shared.', '#ffb020');
+        }
         setState({status: 'reconnecting'});
         const delay = Math.min(10000, 1000 * Math.pow(2, this.reconnectAttempts++));
         this.reconnectTimer = setTimeout(() => {
@@ -256,7 +261,7 @@ class CollabSession {
             // We're first in a new room: our project becomes the room's project.
             this.enqueue(async () => {
                 this.appliedSeq = this.ackSeq = message.seq || 0;
-                await this.uploadSnapshot();
+                await this.uploadSnapshotNow();
                 this.becomeLive();
                 this.addSystemChat(`You created room "${getState().room}". Share the invite link!`);
             });
@@ -300,10 +305,12 @@ class CollabSession {
             // why acks and applied ops are tracked separately.
             this.pendingAcks = Math.max(0, this.pendingAcks - 1);
             if (message.seq > this.ackSeq) this.ackSeq = message.seq;
+            this.trySnapshotUpload();
             break;
 
         case 'request-snapshot':
-            this.enqueue(() => this.uploadSnapshot());
+            this.snapshotWanted = true;
+            this.trySnapshotUpload();
             break;
 
         case 'checkpoint':
@@ -373,13 +380,37 @@ class CollabSession {
         return this.pendingAcks === 0 && !this.sync.hasPendingOutgoing();
     }
 
-    async uploadSnapshot () {
-        // A snapshot must contain exactly the ops up to its sequence number,
-        // so wait until none of our own edits are still on their way.
-        const started = Date.now();
-        while (!this.isQuiet()) {
-            if (Date.now() - started > QUIET_TIMEOUT_MS) return;
-            await sleep(100);
+    /**
+     * The server asked for a snapshot. It must contain exactly the ops up to
+     * its sequence number, so it's only taken when none of our own edits are
+     * in flight, from inside the incoming queue. Queuing it right when we
+     * become quiet (e.g. on an ack) guarantees every op the server sent before
+     * that ack is applied first, without holding up the queue while waiting.
+     */
+    trySnapshotUpload () {
+        if (!this.snapshotWanted || !this.isLive()) return;
+        if (!this.isQuiet()) {
+            // Our edits may still be leaving the outgoing queue; look again soon.
+            clearTimeout(this.snapshotRetryTimer);
+            this.snapshotRetryTimer = setTimeout(() => this.trySnapshotUpload(), 200);
+            return;
+        }
+        this.snapshotWanted = false;
+        this.enqueue(async () => {
+            if (!this.isQuiet()) {
+                this.snapshotWanted = true;
+                this.trySnapshotUpload();
+                return;
+            }
+            await this.uploadSnapshotNow();
+        });
+    }
+
+    async uploadSnapshotNow () {
+        if (!this.vm.runtime.getTargetForStage()) {
+            // Never offer an empty project as the room's copy.
+            log.warn('[collab] not uploading a snapshot: no project loaded');
+            return;
         }
         const {seq, data, hash} = await this.sync.saveSnapshot(() => this.currentSeq());
         const message = JSON.stringify({t: 'snapshot', seq, hash, data: arrayBufferToBase64(data)});

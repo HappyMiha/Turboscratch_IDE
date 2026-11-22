@@ -30,9 +30,9 @@ Avatar.propTypes = {
     small: PropTypes.bool
 };
 
-const JoinForm = ({initialRoom, initialServer, error, projectReady, onJoin}) => {
+const JoinForm = ({initialRoom, lastRoom, initialServer, error, projectReady, onJoin}) => {
     const [name, setName] = useState(loadSavedName());
-    const [room, setRoom] = useState(initialRoom || makeRoomCode());
+    const [room, setRoom] = useState(initialRoom || lastRoom || makeRoomCode());
     const [server, setServer] = useState(initialServer || loadSavedServer() || defaultServerUrl());
     const [showAdvanced, setShowAdvanced] = useState(!!initialServer || !server);
 
@@ -143,6 +143,7 @@ const JoinForm = ({initialRoom, initialServer, error, projectReady, onJoin}) => 
 };
 JoinForm.propTypes = {
     error: PropTypes.string,
+    lastRoom: PropTypes.string,
     projectReady: PropTypes.bool,
     initialRoom: PropTypes.string,
     initialServer: PropTypes.string,
@@ -152,9 +153,10 @@ JoinForm.propTypes = {
 const Chat = ({chat, onSend}) => {
     const [text, setText] = useState('');
     const listRef = useRef(null);
+    const newestKey = chat.length ? chat[chat.length - 1].key : 0;
     useEffect(() => {
         if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-    }, [chat.length]);
+    }, [newestKey]);
     const handleSubmit = e => {
         e.preventDefault();
         if (text.trim()) {
@@ -238,7 +240,7 @@ const RoomView = ({state, onLeave, onResync, onSendChat}) => {
             window.prompt('Copy this link:', invite);
         }
     };
-    const everyone = [Object.assign({mine: true}, state.me)].concat(state.peers);
+    const everyone = (state.me ? [Object.assign({mine: true}, state.me)] : []).concat(state.peers);
     return (
         <div className={styles.room}>
             {state.status === 'reconnecting' && (
@@ -320,16 +322,28 @@ RoomView.propTypes = {
 
 const CollabModal = props => {
     const state = useCollabState();
+    const newestChatKey = state.chat.length ? state.chat[state.chat.length - 1].key : 0;
     useEffect(() => {
         props.onChatRead();
-    }, [state.chat.length]);
+    }, [newestChatKey]);
 
     let body;
     if (state.status === 'connecting' || state.status === 'syncing') {
         body = (
-            <div className={styles.progress}>
-                <div className={styles.spinner} />
-                {state.status === 'connecting' ? 'Connecting to the server…' : 'Loading the room\'s project…'}
+            <div className={styles.progressBox}>
+                <div className={styles.progress}>
+                    <div className={styles.spinner} />
+                    {state.status === 'connecting' ? 'Connecting to the server…' : 'Loading the room\'s project…'}
+                </div>
+                <div className={styles.footer}>
+                    <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={props.onLeave}
+                    >
+                        {'Cancel'}
+                    </button>
+                </div>
             </div>
         );
     } else if (state.status === 'connected' || state.status === 'reconnecting') {
@@ -347,6 +361,7 @@ const CollabModal = props => {
                 error={state.error}
                 initialRoom={props.initialRoom}
                 initialServer={props.initialServer}
+                lastRoom={state.room}
                 projectReady={props.projectReady !== false}
                 onJoin={props.onJoin}
             />

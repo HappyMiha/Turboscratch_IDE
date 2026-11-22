@@ -100,7 +100,8 @@ const readSettings = vm => {
         runtimeOptions: runtime.runtimeOptions,
         compilerOptions,
         stageWidth: runtime.stageWidth,
-        stageHeight: runtime.stageHeight
+        stageHeight: runtime.stageHeight,
+        hqPen: !!(vm.renderer && vm.renderer.useHighQualityRender)
     };
 };
 
@@ -114,6 +115,9 @@ const applySettings = (vm, settings) => {
     vm.setInterpolation(settings.interpolation);
     vm.setRuntimeOptions(settings.runtimeOptions);
     vm.setCompilerOptions(settings.compilerOptions);
+    if (vm.renderer && typeof settings.hqPen === 'boolean') {
+        vm.renderer.setUseHighQualityRender(settings.hqPen);
+    }
 };
 
 /** Reads the room settings stored by saveFullProject, if any. */

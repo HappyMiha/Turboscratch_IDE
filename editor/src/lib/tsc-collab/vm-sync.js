@@ -58,10 +58,10 @@ const CALL_METHODS = {
     setInterpolation: {},
     setRuntimeOptions: {},
     setCompilerOptions: {},
-    setStageSize: {},
-    // "Store settings in project" button in Advanced settings
-    storeProjectOptions: {}
+    setStageSize: {}
 };
+
+const FONT_METHODS = ['addSystemFont', 'addCustomFont', 'deleteFont'];
 
 const SPRITE_INFO_INTERVAL = 60;
 
@@ -108,7 +108,8 @@ const encodeValue = value => {
         };
     }
     if (typeof Element !== 'undefined' && value instanceof Element) {
-        return {__dom: new XMLSerializer().serializeToString(value)};
+        // The VM only ever reads `.outerHTML` from these, so send exactly that.
+        return {__dom: value.outerHTML};
     }
     if (typeof AudioBuffer !== 'undefined' && value instanceof AudioBuffer) {
         // Rebuilt from the WAV bytes on the other side
@@ -176,6 +177,15 @@ class VMSync {
 
         this.workspaceRefreshTimer = null;
         this.restorers = [];
+
+        /** Blockly events fired by a workspace redraw are not edits (see install). */
+        this.redrawingWorkspace = false;
+        /** Sprites already sent (or received) so overlapping uploads aren't sent twice. */
+        this.knownSpriteIds = new Set();
+        /** >0 while our own project load / sprite upload runs (its inner steps aren't edits). */
+        this.localLoads = 0;
+        /** Called when an edit from someone else can't be applied and we must leave. */
+        this.onFatal = () => {};
     }
 
     // ---- setup ----------------------------------------------------------
@@ -212,6 +222,37 @@ class VMSync {
         this.wrap(vm, 'reorderTarget', (original, args) => this.captureReorderTarget(original, args));
         this.wrap(vm, 'loadProject', (original, args) => this.captureProjectLoad(original, args));
         this.wrap(vm.extensionManager, 'loadExtensionURL', (original, args) => this.captureExtension(original, args));
+        this.wrap(vm, 'storeProjectOptions', original => this.captureProjectOptions(original));
+        const fontManager = this.runtime.fontManager;
+        if (fontManager) {
+            for (const method of FONT_METHODS) {
+                this.wrap(fontManager, method, (original, args) => this.captureFont(method, original, args));
+            }
+        }
+        if (vm.renderer && typeof vm.renderer.setUseHighQualityRender === 'function') {
+            this.wrap(vm.renderer, 'setUseHighQualityRender', (original, args) => {
+                const result = original(...args);
+                this.queueOp(() => ({kind: 'hqPen', enabled: !!args[0]}));
+                return result;
+            });
+        }
+
+        // 4. When the GUI redraws the workspace (switching sprites, refreshes),
+        //    Blockly replays delete/create events for every script one tick
+        //    later. They describe the redraw, not edits, so don't send them.
+        //    Two timeouts: Blockly's own flush timer was scheduled during the
+        //    redraw, so ours runs after it.
+        const onWorkspaceUpdate = () => {
+            this.redrawingWorkspace = true;
+            clearTimeout(this.redrawTimer);
+            this.redrawTimer = setTimeout(() => {
+                this.redrawTimer = setTimeout(() => {
+                    this.redrawingWorkspace = false;
+                }, 0);
+            }, 0);
+        };
+        vm.on('workspaceUpdate', onWorkspaceUpdate);
+        this.restorers.push(() => vm.removeListener('workspaceUpdate', onWorkspaceUpdate));
     }
 
     uninstall () {
@@ -313,6 +354,7 @@ class VMSync {
 
     captureBlockEvent (blocks, e) {
         if (!this.shouldCapture() || !e || !BLOCK_EVENT_TYPES.has(e.type)) return null;
+        if (this.redrawingWorkspace) return null;
         const target = this.vm.editingTarget;
         if (!target || blocks !== target.blocks) return null;
         if (!this.changesProject(target, e)) return null;
@@ -374,6 +416,10 @@ class VMSync {
             return !target.lookupVariableById(e.varId) && !stage.lookupVariableById(e.varId);
         case 'comment_create':
             return !Object.prototype.hasOwnProperty.call(target.comments, e.commentId);
+        case 'comment_change':
+        case 'comment_move':
+        case 'comment_delete':
+            return Object.prototype.hasOwnProperty.call(target.comments, e.commentId);
         default:
             return true;
         }
@@ -479,6 +525,11 @@ class VMSync {
         this.queueOp(() => Promise.resolve(result).then(() => {
             const opArgs = args.slice();
             opArgs[objectIndex] = encodeAssetObject(item);
+            if (method === 'addCostume') {
+                // The asset we send was already upgraded by the "version 2"
+                // (library costume) fixes; doing them twice changes the image.
+                opArgs[3] = null;
+            }
             if (method !== 'addBackdrop') opArgs[targetIndex] = {__target: targetRef};
             return {
                 kind: 'call',
@@ -550,14 +601,33 @@ class VMSync {
     /** New sprites are sent as a complete .sprite3 file. */
     captureNewSprites (run) {
         const before = new Set(this.runtime.targets.map(t => t.id));
+        this.localLoads++;
         const result = run();
+        const done = () => {
+            this.localLoads--;
+        };
+        Promise.resolve(result).then(done, done);
         this.queueOp(async () => {
             try {
                 await result;
             } catch (e) {
                 return null;
             }
-            const added = this.runtime.targets.filter(t => !before.has(t.id) && t.isOriginal && !t.isStage);
+            // Sprites that appeared since the call, minus any another upload
+            // (or someone else) already accounts for.
+            const added = this.runtime.targets.filter(t => (
+                !before.has(t.id) && t.isOriginal && !t.isStage && !this.knownSpriteIds.has(t.id)
+            ));
+            added.forEach(t => this.knownSpriteIds.add(t.id));
+            // Two adds at the same moment can both pick the same free name.
+            // Everyone else would rename the second copy on arrival, so do it
+            // here first: sprites are matched between computers by name.
+            for (const target of added) {
+                const clash = this.runtime.targets.some(other => (
+                    other !== target && other.isOriginal && !other.isStage && other.getName() === target.getName()
+                ));
+                if (clash) this.quiet(() => this.vm.renameSprite(target.id, target.getName()));
+            }
             const sprites = [];
             for (const target of added) {
                 const data = await exportFullSprite(this.vm, target.id);
@@ -608,8 +678,12 @@ class VMSync {
             };
             collectVars(target, target.isStage);
             if (!target.isStage) collectVars(stage, true);
+            const extensions = Array.from(new Set(Object.keys(blocks)
+                .map(id => blocks[id].opcode.split('_')[0])
+                .filter(id => this.vm.extensionManager.isBuiltinExtension(id))));
             return {
                 kind: 'insertBlocks',
+                extensions,
                 target: targetRef,
                 blocks: JSON.parse(JSON.stringify(blocks)),
                 variables: encodeValue(variables)
@@ -633,7 +707,12 @@ class VMSync {
 
     /** Loading a whole project (File > Load, File > New, restore point). */
     captureProjectLoad (original, args) {
+        this.localLoads++;
         const result = original(...args);
+        const done = () => {
+            this.localLoads--;
+        };
+        Promise.resolve(result).then(done, done);
         this.queueOp(async () => {
             try {
                 await result;
@@ -646,6 +725,44 @@ class VMSync {
         return result;
     }
 
+    /**
+     * "Store settings in project" writes a comment on the stage with a random
+     * ID and text that depends on this person's own settings. Send the
+     * resulting comment itself so everyone ends up with the same one.
+     */
+    captureProjectOptions (original) {
+        const result = original();
+        const comment = this.runtime.findProjectOptionsComment();
+        if (comment) {
+            const stage = this.runtime.getTargetForStage();
+            const id = Object.keys(stage.comments).find(key => stage.comments[key] === comment);
+            if (id) {
+                this.queueOp(() => ({
+                    kind: 'configComment',
+                    id,
+                    comment: {
+                        text: comment.text,
+                        x: comment.x,
+                        y: comment.y,
+                        width: comment.width,
+                        height: comment.height,
+                        minimized: comment.minimized
+                    }
+                }));
+            }
+        }
+        return result;
+    }
+
+    /** Custom fonts (Fonts dialog). Project/sprite loads add fonts themselves. */
+    captureFont (method, original, args) {
+        if (this.localLoads > 0 || this.remoteAsync > 0) return original(...args);
+        const encodedArgs = args.map(encodeValue);
+        const result = original(...args);
+        this.queueOp(() => ({kind: 'font', method, args: encodedArgs}));
+        return result;
+    }
+
     captureExtension (original, args) {
         const url = args[0];
         const alreadyLoaded = typeof url === 'string' && (
@@ -654,7 +771,7 @@ class VMSync {
                 this.vm.extensionManager.isExtensionURLLoaded(url))
         );
         const result = original(...args);
-        if (!alreadyLoaded && typeof url === 'string' && this.remoteAsync === 0) {
+        if (!alreadyLoaded && typeof url === 'string' && this.remoteAsync === 0 && this.localLoads === 0) {
             this.queueOp(() => Promise.resolve(result).then(() => ({kind: 'extension', url}), () => null));
         }
         return result;
@@ -671,8 +788,9 @@ class VMSync {
             return new ImageData(new Uint8ClampedArray(base64ToArrayBuffer(data)), width, height);
         }
         if (typeof value.__dom === 'string') {
-            const doc = new DOMParser().parseFromString(value.__dom, 'text/xml');
-            return doc.documentElement;
+            // Re-parsing as XML can fail on characters allowed in block text,
+            // and the VM only needs the markup string.
+            return {outerHTML: value.__dom};
         }
         if (value.__audioBuffer) return null;
         if (value.__asset) {
@@ -743,19 +861,48 @@ class VMSync {
                 break;
             }
             case 'addSprites':
-                await this.applyAddSprites(op);
+                try {
+                    await this.applyAddSprites(op);
+                } catch (e) {
+                    log.error('[collab] could not add a shared sprite', e);
+                    this.onFatal(`Couldn't add the sprite ${this.currentPeerName} shared ` +
+                        '(maybe an extension was blocked). You left the room; join again to retry.');
+                }
                 break;
             case 'insertBlocks':
                 this.quiet(() => this.applyInsertBlocks(op));
                 break;
             case 'project':
-                await this.loadProjectQuietly(base64ToArrayBuffer(op.sb3));
+                try {
+                    await this.loadProjectQuietly(base64ToArrayBuffer(op.sb3));
+                } catch (e) {
+                    log.error('[collab] could not load a shared project', e);
+                    // Carrying on with a half-loaded project could overwrite the room.
+                    this.onFatal(`Couldn't load the project ${this.currentPeerName} shared ` +
+                        '(maybe an extension was blocked). You left the room; join again to retry.');
+                }
                 break;
             case 'extension':
                 await this.applyExtension(op.url);
                 break;
             case 'reorderSprite':
                 this.quiet(() => this.applyReorderSprite(op));
+                break;
+            case 'configComment':
+                this.quiet(() => this.applyConfigComment(op));
+                break;
+            case 'font': {
+                const fontManager = this.runtime.fontManager;
+                const args = op.args.map(arg => this.decodeValue(arg));
+                if (fontManager && FONT_METHODS.indexOf(op.method) !== -1) {
+                    this.quiet(() => Object.getPrototypeOf(fontManager)[op.method].apply(fontManager, args));
+                }
+                break;
+            }
+            case 'hqPen':
+                if (this.vm.renderer) {
+                    this.quiet(() => this.vm.renderer.setUseHighQualityRender(op.enabled));
+                }
                 break;
             default:
                 log.warn('[collab] unknown op', op.kind);
@@ -942,7 +1089,9 @@ class VMSync {
             }
         }
 
-        const fn = vm[op.method];
+        // Use the VM's own method, not an addon's wrapper that might ask
+        // questions (like "really delete this sprite?") about someone else's edit.
+        const fn = Object.getPrototypeOf(vm)[op.method];
         if (typeof fn !== 'function') return;
         const run = () => fn.apply(vm, args);
         await this.quietAsync(() => (contextTarget ? this.withEditingTarget(contextTarget, run) : run()));
@@ -954,6 +1103,7 @@ class VMSync {
 
     async applyExtension (url) {
         const manager = this.vm.extensionManager;
+        if (manager.isExtensionLoaded(url) || manager.isExtensionURLLoaded(url)) return;
         if (!manager.isBuiltinExtension(url)) {
             // Someone else added a custom extension: ask before running its code.
             const allowed = await this.vm.securityManager.canLoadExtensionFromProject(url);
@@ -980,11 +1130,31 @@ class VMSync {
         this.vm.reorderTarget(from, to);
     }
 
+    applyConfigComment (op) {
+        const stage = this.runtime.getTargetForStage();
+        const existing = this.runtime.findProjectOptionsComment();
+        if (existing) {
+            const oldId = Object.keys(stage.comments).find(key => stage.comments[key] === existing);
+            if (oldId && oldId !== op.id) delete stage.comments[oldId];
+        }
+        const c = op.comment;
+        if (stage.comments[op.id]) {
+            Object.assign(stage.comments[op.id], c);
+        } else {
+            stage.createComment(op.id, null, c.text, c.x, c.y, c.width, c.height, c.minimized);
+        }
+        this.runtime.emitProjectChanged();
+        if (this.vm.editingTarget === stage) this.refreshWorkspaceSoon();
+    }
+
     async applyAddSprites (op) {
         for (const base64 of op.sprites) {
             const previous = this.vm.editingTarget;
             const before = new Set(this.runtime.targets.map(t => t.id));
             await this.quietAsync(() => this.vm.addSprite(base64ToArrayBuffer(base64)));
+            this.runtime.targets.forEach(t => {
+                if (!before.has(t.id)) this.knownSpriteIds.add(t.id);
+            });
             // Adding a sprite selects it; put your view back where it was.
             const current = this.vm.editingTarget;
             if (previous && current && !before.has(current.id) && this.runtime.getTargetById(previous.id)) {
@@ -996,6 +1166,12 @@ class VMSync {
     applyInsertBlocks (op) {
         const target = this.resolve(op.target);
         if (!target) return;
+        for (const id of op.extensions || []) {
+            const manager = this.vm.extensionManager;
+            if (manager.isBuiltinExtension(id) && !manager.isExtensionLoaded(id)) {
+                manager.loadExtensionIdSync(id);
+            }
+        }
         const stage = this.runtime.getTargetForStage();
         for (const v of this.decodeValue(op.variables)) {
             const owner = v.stage ? stage : target;
@@ -1047,6 +1223,7 @@ class VMSync {
             t.getCostumes().map(c => [c.name, c.dataFormat, c.dataFormat === 'svg' ? c.assetId : null]),
             t.getSounds().map(s => [s.name, s.assetId]),
             Object.keys(t.variables).sort()
+                .filter(id => t.variables[id].type !== 'broadcast_msg')
                 .map(id => [id, t.variables[id].name, t.variables[id].type]),
             Object.keys(t.comments).sort()
                 .map(id => [id, t.comments[id].blockId || null, t.comments[id].text]),

@@ -63,7 +63,9 @@ const makeInviteLink = (room, serverUrl) => {
     const url = new URL(location.href);
     url.hash = '';
     url.searchParams.set('room', room);
-    if (serverUrl && serverUrl !== defaultServerUrl()) {
+    // Always include the server so friends end up on the same one, whatever
+    // server they used last time.
+    if (serverUrl) {
         url.searchParams.set('collab_server', serverUrl);
     } else {
         url.searchParams.delete('collab_server');
