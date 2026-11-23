@@ -5,6 +5,9 @@
 # (for example from neon.tech) when Render asks. Accounts, posted projects,
 # friends and studios are stored there permanently.
 #
+# ANTHROPIC_API_KEY (optional): a Claude API key for Ada, the AI helper.
+# Leave it empty to turn Ada off.
+#
 # Free instances sleep after ~15 minutes with nobody connected and wake up
 # (in up to a minute) on the next visit. Their disk is temporary, so
 # collaboration rooms are kept only while the server is awake; everyone's
@@ -23,4 +26,6 @@ services:
       - key: NODE_VERSION
         value: "22"
       - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
         sync: false

@@ -28,6 +28,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {WebSocketServer} = require('ws');
+// Settings such as ANTHROPIC_API_KEY can live in a .env file next to this one
+// (never committed: see .gitignore).
+try {
+    process.loadEnvFile(path.join(__dirname, '.env'));
+} catch (e) {
+    // no .env file
+}
 const {openDatabase} = require('./community/db');
 const {createCommunityApi} = require('./community/api');
 

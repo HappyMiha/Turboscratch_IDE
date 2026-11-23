@@ -88,6 +88,15 @@ const SCHEMA = [
         added_by INTEGER NOT NULL,
         added_at {{BIGINT}} NOT NULL,
         PRIMARY KEY (studio_id, project_id)
+    )`,
+    // How much each person (u:<id>), network (ip:<hash>) and the whole server
+    // ('all') used Ada per day (UTC date), so daily limits survive restarts.
+    `CREATE TABLE IF NOT EXISTS ai_usage (
+        usage_key TEXT NOT NULL,
+        day TEXT NOT NULL,
+        turns INTEGER NOT NULL DEFAULT 0,
+        tokens {{BIGINT}} NOT NULL DEFAULT 0,
+        PRIMARY KEY (usage_key, day)
     )`
 ];
 

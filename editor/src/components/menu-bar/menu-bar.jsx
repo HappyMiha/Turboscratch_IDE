@@ -38,6 +38,7 @@ import {
 } from '../../reducers/modals';
 import AccountButtons from '../tsc-community/account-button.jsx';
 import CollabButton from '../tsc-collab/collab-button.jsx';
+import AdaButton from '../tsc-ai/ada-button.jsx';
 import turboscratchLogo from './turboscratch-logo.svg';
 import {setPlayer} from '../../reducers/mode';
 import {
@@ -904,6 +905,15 @@ class MenuBar extends React.Component {
                                 onClick={this.props.onClickCollab}
                             />
                         )}
+                        {!this.props.isPlayerOnly && (
+                            <AdaButton
+                                className={classNames(styles.menuBarItem, styles.hoverable)}
+                                isFullScreen={this.props.isFullScreen}
+                                labelClassName={styles.collapsibleLabel}
+                                vm={this.props.vm}
+                                onOpenCommunity={this.props.onClickCommunity}
+                            />
+                        )}
                         {this.props.onClickAddonSettings && (
                             <div
                                 className={classNames(styles.menuBarItem, styles.hoverable)}
@@ -1091,6 +1101,7 @@ MenuBar.propTypes = {
     fileMenuOpen: PropTypes.bool,
     handleSaveProject: PropTypes.func,
     intl: intlShape,
+    isFullScreen: PropTypes.bool,
     isPlayerOnly: PropTypes.bool,
     isRtl: PropTypes.bool,
     isShared: PropTypes.bool,
@@ -1180,6 +1191,7 @@ const mapStateToProps = (state, ownProps) => {
         editMenuOpen: editMenuOpen(state),
         errors: state.scratchGui.tw.compileErrors,
         errorsMenuOpen: errorsMenuOpen(state),
+        isFullScreen: state.scratchGui.mode.isFullScreen,
         isPlayerOnly: state.scratchGui.mode.isPlayerOnly,
         isRtl: state.locales.isRtl,
         isUpdating: getIsUpdating(loadingState),

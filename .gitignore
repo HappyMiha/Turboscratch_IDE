@@ -6,6 +6,9 @@ editor/dist/
 # Collaboration server room storage (your rooms' projects)
 collab-server/data/
 
+# Secrets (the AI key)
+.env
+
 # Logs and local files
 *.log
 .DS_Store

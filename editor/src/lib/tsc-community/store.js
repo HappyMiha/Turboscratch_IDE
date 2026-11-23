@@ -23,6 +23,12 @@ const setAccountState = patch => {
     for (const listener of listeners) listener(state);
 };
 
+/** Calls listener(state) whenever the account state changes; returns an unsubscribe function. */
+const subscribeAccount = listener => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+};
+
 const useAccount = () => {
     const [current, setCurrent] = useState(state);
     useEffect(() => {
@@ -89,5 +95,6 @@ export {
     useAccount,
     signedIn,
     signOut,
-    restoreSession
+    restoreSession,
+    subscribeAccount
 };

@@ -8,6 +8,7 @@
 'use strict';
 
 const auth = require('./auth');
+const {createAiHelper} = require('../ai/helper');
 
 const NICKNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
 const MAX_PASSWORD = 200;
@@ -602,6 +603,17 @@ const createCommunityApi = ({db, log}) => {
         });
         return [200, {ok: true}];
     }, {signedIn: true});
+
+    // ---- Ada, the AI helper ---------------------------------------------
+
+    const ai = createAiHelper({HttpError, corsHeaders: CORS_HEADERS, log, db, clientIp});
+
+    route('GET', /^\/api\/ai\/status$/, () => [200, ai.status()]);
+
+    route('POST', /^\/api\/ai\/chat$/, async ({req, res, me, body}) => {
+        await ai.chat({req, res, me, body});
+        return null;
+    }, {signedIn: true, maxBody: 1024 * 1024});
 
     // ---- dispatch ---------------------------------------------------------
 
