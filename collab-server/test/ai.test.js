@@ -174,7 +174,10 @@ const startServer = env => new Promise((resolve, reject) => {
         stdio: ['ignore', 'pipe', 'inherit']
     });
     serverProcess.stdout.on('data', chunk => {
-        if (chunk.toString().includes('listening')) resolve();
+        const text = chunk.toString();
+        // Show why, if the server couldn't open its database.
+        if (text.includes('Accounts are disabled')) process.stderr.write(text);
+        if (text.includes('listening')) resolve();
     });
     serverProcess.on('error', reject);
 });

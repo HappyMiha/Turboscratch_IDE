@@ -233,12 +233,26 @@ class PostgresDb {
     }
 }
 
+// Any fixed number: servers starting at the same moment (a new deploy while
+// the old one still runs) take turns creating the tables, because PostgreSQL
+// can fail when two "CREATE TABLE IF NOT EXISTS" run at the same time.
+const SCHEMA_LOCK_ID = 7243001;
+
 const openDatabase = async ({databaseUrl, dataDir}) => {
     const db = databaseUrl ?
         new PostgresDb(databaseUrl) :
         new SqliteDb(path.join(dataDir, 'community.sqlite'));
-    for (const statement of SCHEMA) {
-        await db.run(ddl(statement, db.dialect));
+    if (db.dialect === 'postgres') {
+        await db.tx(async t => {
+            await t.run(`SELECT pg_advisory_xact_lock(${SCHEMA_LOCK_ID})`);
+            for (const statement of SCHEMA) {
+                await t.run(ddl(statement, db.dialect));
+            }
+        });
+    } else {
+        for (const statement of SCHEMA) {
+            await db.run(ddl(statement, db.dialect));
+        }
     }
     return db;
 };
